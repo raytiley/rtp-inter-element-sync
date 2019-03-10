@@ -1,0 +1,12 @@
+[package]
+name = "rtp_inter_repo"
+version = "0.1.0"
+authors = ["raytiley <raytiley@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+glib = { git = "https://github.com/gtk-rs/glib" }
+gstreamer = { git = "https://github.com/sdroege/gstreamer-rs", features=["v1_10"] }
+gstreamer-app = { git = "https://github.com/sdroege/gstreamer-rs" }
+gstreamer-audio = { git = "https://github.com/sdroege/gstreamer-rs" }
+gstreamer-video = { git = "https://github.com/sdroege/gstreamer-rs" }
