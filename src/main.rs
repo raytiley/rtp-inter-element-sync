@@ -17,12 +17,12 @@ fn main() {
         let five_secs = time::Duration::from_secs(5);
         thread::sleep(five_secs);
 
-        start_recv_pipeline();
+        let (audio_proxysink, video_proxysink, base_time) = start_recv_pipeline();
 
-        let five_secs = time::Duration::from_secs(5);
-        thread::sleep(five_secs);
+        //let five_secs = time::Duration::from_secs(5);
+        //thread::sleep(five_secs);
 
-        start_output_pipeline();
+        start_output_pipeline(audio_proxysink, video_proxysink, base_time);
 
         println!("Hit return to quit.");
         let mut input = String::new();
@@ -37,41 +37,27 @@ fn make_element(factory_name: &str, element_name: &str, id: &str) -> gst::Elemen
 }
 
 
-fn start_recv_pipeline() {
+fn start_recv_pipeline() -> (gst::Element, gst::Element, gst::ClockTime) {
     println!("Starting Receiving Pipeline...");
     let rtp_name = "test";
     let udpsrc = make_element("udpsrc", "rtp-udpsrc", &rtp_name);
 
     udpsrc.set_property_from_str("caps", "application/x-rtp,media=video,encoding-name=MP2T,clock-rate=90000");
-    udpsrc.set_property_from_str("address", &"127.0.0.1");
-    udpsrc.set_property_from_str("port", &"6666");
+    udpsrc.set_property_from_str("address", &"192.168.0.10");
+    udpsrc.set_property_from_str("port", &"4444");
 
     let decodebin = make_element("decodebin", "rtp-decodebin", &rtp_name);
     let network_queue = make_element("queue", "network-queue", &rtp_name);
     let rtpjitterbuffer = make_element("rtpjitterbuffer", "jitterbuffer", &rtp_name);
 
-    // QUESTION - What if any values do I need to adjust on the queues below?
-    // Are they even needed?
     let video_queue = make_element("queue", "video-queue-x", &rtp_name);
     let audio_queue = make_element("queue", "audio-queue-x", &rtp_name);
 
     video_queue.set_property_from_str("leaky", &"true");
     audio_queue.set_property_from_str("leaky", &"true");
 
-    let video_sink = make_element("intervideosink", "rtp-video-sink", &rtp_name);
-    let audio_sink = make_element("interaudiosink", "rtp-audio-sink", &rtp_name);
-
-    let audio_convert = make_element("audioconvert", "rtp-audio-convert", &rtp_name);
-    let audio_resample = make_element("audioresample", "rtp-audio-resample", &rtp_name);
-    let audio_capsfilter = make_element("capsfilter", "rtp-audio-capsfilter", &rtp_name);
-    let audio_caps = gst::Caps::builder("audio/x-raw")
-        .field("channels", &2)
-        .field("rate", &48_000)
-        .field("layout", &"interleaved")
-        .any_features()
-        .build();
-
-    audio_capsfilter.set_property("caps", &audio_caps).unwrap();
+    let video_sink = make_element("proxysink", "rtp-video-sink", &rtp_name);
+    let audio_sink = make_element("proxysink", "rtp-audio-sink", &rtp_name);
 
     let video_convert = make_element("videoconvert", "rtp-videoconvert", &rtp_name);
 
@@ -79,11 +65,11 @@ fn start_recv_pipeline() {
     rtp_pipeline.use_clock(&gst::SystemClock::obtain());
 
     // Add All The elements
-    rtp_pipeline.add_many(&[&rtpjitterbuffer, &video_convert, &audio_convert, &audio_resample, &audio_capsfilter, &network_queue, &video_queue, &audio_queue, &audio_sink, &video_sink, &udpsrc, &decodebin]).unwrap();
+    rtp_pipeline.add_many(&[&rtpjitterbuffer, &network_queue, &video_queue, &audio_queue, &audio_sink, &video_sink, &udpsrc, &decodebin]).unwrap();
 
     gst::Element::link_many(&[&udpsrc, &rtpjitterbuffer, &decodebin]).unwrap();
-    gst::Element::link_many(&[&video_queue, &video_convert, &video_sink]).unwrap();
-    gst::Element::link_many(&[&audio_queue, &audio_convert, &audio_resample, &audio_capsfilter, &audio_sink]).unwrap();
+    gst::Element::link_many(&[&video_queue, &video_sink]).unwrap();
+    gst::Element::link_many(&[&audio_queue, &audio_sink]).unwrap();
 
     let video_queue_weak = video_queue.downgrade();
     let audio_queue_weak = audio_queue.downgrade();
@@ -142,13 +128,20 @@ fn start_recv_pipeline() {
     });
 
     let ret = rtp_pipeline.set_state(gst::State::Playing);
+
+    (audio_sink, video_sink, rtp_pipeline.get_base_time())
 }
 
-fn start_output_pipeline() {
-    println!("Starting Output Pipeline...");
+fn start_output_pipeline(audio_proxysink: gst::Element, video_proxysink: gst::Element, base_time: gst::ClockTime) {
+    println!("Starting Output Pipeline... BaseTime: {:?}", base_time);
     let channel = "output-channel";
-    let intervideosrc = make_element("intervideosrc", "intervideosrc", &channel);
-    let interaudiosrc = make_element("interaudiosrc", "interaudiosrc", &channel);
+    let intervideosrc = make_element("proxysrc", "intervideosrc", &channel);
+    intervideosrc.set_property("proxysink", &video_proxysink);
+
+
+    let interaudiosrc = make_element("proxysrc", "interaudiosrc", &channel);
+    interaudiosrc.set_property("proxysink", &audio_proxysink);
+
     let video_queue = make_element("queue", "rtp-video-queue", &channel);
     let audio_queue = make_element("queue", "rtp-audio-queue", &channel);
 
@@ -171,7 +164,7 @@ fn start_output_pipeline() {
             .field("width", &1920)
             .field("height", &1080)
             //.field("format", &"BGRA")
-            .field("framerate", &gst::Fraction::new(30, 1))
+            //.field("framerate", &gst::Fraction::new(30, 1))
             .any_features()
             .build();
 
@@ -186,9 +179,11 @@ fn start_output_pipeline() {
 
     audio_capsfilter.set_property("caps", &audio_caps).unwrap();
 
-    rtp_pipeline.add_many(&[&test_video_sink, &test_audio_sink, &audio_convert, &deinterlace, &audio_resample, &video_convert, &video_rate, &video_scale, &audio_capsfilter, &video_capsfilter, &intervideosrc, &interaudiosrc, &video_queue, &audio_queue]).unwrap();
+    rtp_pipeline.add_many(&[&test_video_sink, &test_audio_sink, &audio_convert, &audio_resample, &video_convert, &video_rate, &video_scale, &audio_capsfilter, &video_capsfilter, &intervideosrc, &interaudiosrc, &video_queue, &audio_queue]).unwrap();
 
-    gst::Element::link_many(&[&intervideosrc, &video_scale, &video_rate, &deinterlace, &video_convert, &video_capsfilter, &video_queue, &test_video_sink]);
+    gst::Element::link_many(&[&intervideosrc, &video_scale, &video_rate, &video_convert, &video_capsfilter, &video_queue, &test_video_sink]);
     gst::Element::link_many(&[&interaudiosrc, &audio_convert, &audio_resample, &audio_capsfilter, &audio_queue, &test_audio_sink]);
+
+    rtp_pipeline.set_base_time(base_time);
     rtp_pipeline.set_state(gst::State::Playing);
 }
