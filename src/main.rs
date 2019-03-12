@@ -43,8 +43,8 @@ fn start_recv_pipeline() -> (gst::Element, gst::Element, gst::ClockTime) {
     let udpsrc = make_element("udpsrc", "rtp-udpsrc", &rtp_name);
 
     udpsrc.set_property_from_str("caps", "application/x-rtp,media=video,encoding-name=MP2T,clock-rate=90000");
-    udpsrc.set_property_from_str("address", &"192.168.0.10");
-    udpsrc.set_property_from_str("port", &"4444");
+    udpsrc.set_property_from_str("address", &"127.0.0.1");
+    udpsrc.set_property_from_str("port", &"6666");
 
     let decodebin = make_element("decodebin", "rtp-decodebin", &rtp_name);
     let network_queue = make_element("queue", "network-queue", &rtp_name);
